@@ -450,27 +450,28 @@ async def jira_creator_agent(create_queue):
                 names.append(n)
         return names
 
-    all_tools = composio_direct.tools.get(user_id=COMPOSIO_USER_ID, toolkits=["JIRA"])
-    slugs = _extract_slugs(all_tools)
-
-    # Explicitly pull the tools we need that may sit beyond the 20-item default page
-    EXTRA_NEEDED = [
-        "JIRA_TRANSITION_ISSUE",
-        "JIRA_GET_ISSUE_TRANSITIONS",
-        "JIRA_GET_ALL_BOARDS",
-        "JIRA_GET_AGILE_BOARD_SPRINTS",
-        "JIRA_GET_BOARD_SPRINTS",
-        "JIRA_MOVE_ISSUES_TO_SPRINT",
-        "JIRA_ASSIGN_ISSUE",
-        "JIRA_UPDATE_SPRINT",
-    ]
+    # Fetch all Jira tools — try with a high limit first, fall back to paginating
+    slugs = []
     try:
-        extra_tools = composio_direct.tools.get(user_id=COMPOSIO_USER_ID, actions=EXTRA_NEEDED)
-        for name in _extract_slugs(extra_tools):
-            if name not in slugs:
-                slugs.append(name)
-    except Exception as e:
-        print(f"[AGENT 3] Extra tool fetch warning: {e}")
+        all_tools = composio_direct.tools.get(user_id=COMPOSIO_USER_ID, toolkits=["JIRA"], limit=200)
+        slugs = _extract_slugs(all_tools)
+    except TypeError:
+        # limit= not supported — paginate manually in steps of 20
+        offset = 0
+        while True:
+            try:
+                batch = composio_direct.tools.get(user_id=COMPOSIO_USER_ID, toolkits=["JIRA"], offset=offset)
+            except TypeError:
+                batch = composio_direct.tools.get(user_id=COMPOSIO_USER_ID, toolkits=["JIRA"])
+                slugs = _extract_slugs(batch)
+                break
+            names = _extract_slugs(batch)
+            if not names:
+                break
+            slugs.extend(n for n in names if n not in slugs)
+            if len(names) < 20:
+                break
+            offset += 20
 
     print(f"[AGENT 3] Available Jira tools ({len(slugs)}): {slugs}")
 
@@ -491,12 +492,13 @@ async def jira_creator_agent(create_queue):
     create_slug      = exact("JIRA_CREATE_ISSUE")           or find_slug("CREATE", "ISSUE", exclude=["BULK"])
     assign_slug      = exact("JIRA_ASSIGN_ISSUE")
     transition_slug  = exact("JIRA_TRANSITION_ISSUE")       or find_slug("TRANSITION", "ISSUE")
-    get_trans_slug   = exact("JIRA_GET_ISSUE_TRANSITIONS")  or find_slug("GET", "TRANSITION")
-    boards_slug      = exact("JIRA_GET_ALL_BOARDS")         or find_slug("GET", "BOARD", exclude=["SPRINT"])
-    sprints_slug     = exact("JIRA_GET_AGILE_BOARD_SPRINTS") or exact("JIRA_GET_BOARD_SPRINTS") or find_slug("SPRINT", "BOARD")
-    move_sprint_slug = exact("JIRA_MOVE_ISSUES_TO_SPRINT")  or find_slug("MOVE", "SPRINT")
+    get_trans_slug   = exact("JIRA_GET_TRANSITIONS") or exact("JIRA_GET_ISSUE_TRANSITIONS") or find_slug("GET", "TRANSITION")
+    boards_slug      = exact("JIRA_LIST_BOARDS") or exact("JIRA_GET_ALL_BOARDS") or find_slug("LIST", "BOARD") or find_slug("GET", "BOARD", exclude=["SPRINT"])
+    sprints_slug     = exact("JIRA_LIST_SPRINTS") or exact("JIRA_GET_AGILE_BOARD_SPRINTS") or exact("JIRA_GET_BOARD_SPRINTS") or find_slug("LIST", "SPRINT") or find_slug("SPRINT", "BOARD")
+    move_sprint_slug = exact("JIRA_MOVE_ISSUE_TO_SPRINT") or exact("JIRA_MOVE_ISSUES_TO_SPRINT") or find_slug("MOVE", "SPRINT")
     create_sprint_slug = exact("JIRA_CREATE_SPRINT")
     update_sprint_slug = exact("JIRA_UPDATE_SPRINT")        or find_slug("UPDATE", "SPRINT")
+    edit_issue_slug  = exact("JIRA_EDIT_ISSUE") or exact("JIRA_UPDATE_ISSUE") or find_slug("EDIT", "ISSUE") or find_slug("UPDATE", "ISSUE", exclude=["SPRINT", "BULK"])
 
     print(f"[AGENT 3] create={create_slug} | assign={assign_slug} | transition={transition_slug} | get_trans={get_trans_slug}")
     print(f"[AGENT 3] boards={boards_slug} | sprints={sprints_slug} | move_sprint={move_sprint_slug}")
@@ -517,42 +519,75 @@ async def jira_creator_agent(create_queue):
     # ── Sprint pre-fetch + auto-create ──────────────────────────────────────
     # Build {sprint_name: sprint_id}. If no active sprint exists, create and
     # start one so tickets land on the board (not buried in the backlog).
-    sprint_map: dict = {}
+    sprint_map: dict = {}       # name → id
+    sprint_state_map: dict = {} # name → state ("active"/"future"/"closed")
     active_sprint_id = None
     board_id = None
 
     if boards_slug:
         try:
-            br = composio_direct.tools.execute(
-                slug=boards_slug,
-                arguments={"projectKeyOrId": JIRA_PROJECT_KEY},
-                user_id=COMPOSIO_USER_ID,
-                dangerously_skip_version_check=True,
-            )
-            board_data = br.get("data", {})
-            boards = board_data.get("values", []) or board_data.get("boards", []) or []
-            if boards:
-                board_id = boards[0].get("id")
-                print(f"[AGENT 3] Board ID: {board_id}")
+            # Try multiple param names — Composio tools vary between camelCase and snake_case
+            br = None
+            for board_args in [
+                {"projectKeyOrId": JIRA_PROJECT_KEY},
+                {"project_key": JIRA_PROJECT_KEY},
+                {},
+            ]:
+                _r = composio_direct.tools.execute(
+                    slug=boards_slug,
+                    arguments=board_args,
+                    user_id=COMPOSIO_USER_ID,
+                    dangerously_skip_version_check=True,
+                )
+                print(f"[AGENT 3] Board fetch ({board_args}): successful={_r.get('successful')} data_keys={list((_r.get('data') or {}).keys())}")
+                if _r.get("successful"):
+                    br = _r
+                    break
 
-                if sprints_slug and board_id:
-                    sr = composio_direct.tools.execute(
-                        slug=sprints_slug,
-                        arguments={"boardId": board_id},
-                        user_id=COMPOSIO_USER_ID,
-                        dangerously_skip_version_check=True,
-                    )
-                    sprints = sr.get("data", {}).get("values", []) or sr.get("data", {}).get("sprints", []) or []
-                    for sp in sprints:
-                        name = sp.get("name", "")
-                        sid  = sp.get("id")
-                        if name and sid:
-                            sprint_map[name] = sid
-                        if sp.get("state") == "active" and sid:
-                            active_sprint_id = sid
-                    print(f"[AGENT 3] Sprints found: {list(sprint_map.keys())} | active_id={active_sprint_id}")
+            if br:
+                board_data = br.get("data", {})
+                boards = (board_data.get("values") or board_data.get("boards")
+                          or board_data.get("results") or [])
+                print(f"[AGENT 3] Boards found: {len(boards)}")
+                if boards:
+                    board_id = boards[0].get("id")
+                    print(f"[AGENT 3] Board ID: {board_id} (type={boards[0].get('type')})")
+
+                    if sprints_slug and board_id:
+                        # Try both camelCase and snake_case board ID param
+                        sr = None
+                        for sprint_args in [
+                            {"boardId": board_id},
+                            {"board_id": board_id},
+                        ]:
+                            _sr = composio_direct.tools.execute(
+                                slug=sprints_slug,
+                                arguments=sprint_args,
+                                user_id=COMPOSIO_USER_ID,
+                                dangerously_skip_version_check=True,
+                            )
+                            print(f"[AGENT 3] Sprint fetch ({sprint_args}): successful={_sr.get('successful')} data_keys={list((_sr.get('data') or {}).keys())}")
+                            if _sr.get("successful"):
+                                sr = _sr
+                                break
+
+                        if sr:
+                            sprints = (sr.get("data", {}).get("values") or
+                                       sr.get("data", {}).get("sprints") or [])
+                            for sp in sprints:
+                                name  = sp.get("name", "")
+                                sid   = sp.get("id")
+                                state = sp.get("state", "unknown")
+                                if name and sid:
+                                    sprint_map[name] = sid
+                                    sprint_state_map[name] = state
+                                    print(f"[AGENT 3]   Sprint: '{name}' id={sid} state={state}")
+                                if state == "active" and sid:
+                                    active_sprint_id = sid
+                            print(f"[AGENT 3] Sprint map: {sprint_map} | active_id={active_sprint_id}")
         except Exception as e:
             print(f"[AGENT 3] Sprint pre-fetch error (non-fatal): {e}")
+            import traceback; traceback.print_exc()
 
     # Helper: get sprint ID for a name, creating + activating it if needed
     _created_sprint_ids: dict = {}
@@ -620,12 +655,19 @@ async def jira_creator_agent(create_queue):
             try:
                 tr = composio_direct.tools.execute(
                     slug=get_trans_slug,
-                    arguments={"issueKey": issue_key},
+                    arguments={"issue_id_or_key": issue_key},
                     user_id=COMPOSIO_USER_ID,
                     dangerously_skip_version_check=True,
                 )
-                _trans_cache[issue_key] = tr.get("data", {}).get("transitions", [])
-            except Exception:
+                data = tr.get("data", {})
+                # Composio may nest under transitions, values, or return a list directly
+                raw = (data.get("transitions") or data.get("values")
+                       or data.get("results") or data or [])
+                transitions = raw if isinstance(raw, list) else []
+                print(f"[AGENT 3]   Available transitions for {issue_key}: {[t.get('name') for t in transitions]}")
+                _trans_cache[issue_key] = transitions
+            except Exception as e:
+                print(f"[AGENT 3]   Transition fetch error: {e}")
                 _trans_cache[issue_key] = []
         for t in _trans_cache[issue_key]:
             if t.get("name", "").lower() == target.lower():
@@ -689,17 +731,20 @@ async def jira_creator_agent(create_queue):
                 "labels":     ["sprint-automation"],
             }
 
-            # Story points (try the field name Composio exposes)
+            # Story points — included in create; also retried via edit after creation
+            story_points_val = None
             if effort_raw:
                 try:
-                    create_args["storyPoints"] = float(effort_raw)
+                    story_points_val = float(effort_raw)
+                    create_args["story_points"] = story_points_val
                 except ValueError:
                     pass
 
             # Assignee — prefer the Assignee column, fall back to Owner
+            # Jira rejects display names in "assignee"; use "assignee_name" instead
             actor = assignee or owner
             if actor:
-                create_args["assignee"] = actor
+                create_args["assignee_name"] = actor
 
             # ── Create the issue ────────────────────────────────────────────
             result = composio_direct.tools.execute(
@@ -714,7 +759,7 @@ async def jira_creator_agent(create_queue):
                 err_str = str(result.get("error", ""))
                 if actor and ("assignee" in err_str.lower() or "account" in err_str.lower() or "user" in err_str.lower()):
                     print(f"[AGENT 3]   Assignee field rejected — retrying without it (will assign separately)")
-                    create_args.pop("assignee", None)
+                    create_args.pop("assignee_name", None)
                     result = composio_direct.tools.execute(
                         slug=create_slug,
                         arguments=create_args,
@@ -734,48 +779,125 @@ async def jira_creator_agent(create_queue):
                 try:
                     ar = composio_direct.tools.execute(
                         slug=assign_slug,
-                        arguments={"issueKey": issue_key, "assignee": actor},
+                        arguments={"issue_id_or_key": issue_key, "assignee_name": actor},
                         user_id=COMPOSIO_USER_ID,
                         dangerously_skip_version_check=True,
                     )
                     if ar.get("successful"):
                         print(f"[AGENT 3]   Assignee → '{actor}' ✓")
                     else:
-                        print(f"[AGENT 3]   Assignee failed: {str(ar.get('error',''))[:100]}")
+                        print(f"[AGENT 3]   Assignee failed: {str(ar.get('error',''))[:200]}")
                 except Exception as ae:
                     print(f"[AGENT 3]   Assignee error: {ae}")
 
+            # ── Story points (post-creation edit — create field is often ignored) ──
+            if story_points_val is not None and edit_issue_slug and issue_key != "unknown":
+                try:
+                    # Composio JIRA_EDIT_ISSUE requires `fields` as a JSON string, not a dict
+                    for sp_args in [
+                        {"issue_id_or_key": issue_key, "story_point_estimate": story_points_val},
+                        {"issue_id_or_key": issue_key, "fields": json.dumps({"customfield_10016": story_points_val})},
+                        {"issue_id_or_key": issue_key, "fields": json.dumps({"customfield_10028": story_points_val})},
+                    ]:
+                        spr = composio_direct.tools.execute(
+                            slug=edit_issue_slug,
+                            arguments=sp_args,
+                            user_id=COMPOSIO_USER_ID,
+                            dangerously_skip_version_check=True,
+                        )
+                        if spr.get("successful"):
+                            print(f"[AGENT 3]   Story points → {story_points_val} ✓")
+                            break
+                    else:
+                        print(f"[AGENT 3]   Story points update failed: {str(spr.get('error',''))[:150]}")
+                except Exception as spe:
+                    print(f"[AGENT 3]   Story points error: {spe}")
+
             # ── Move to sprint ──────────────────────────────────────────────
-            if move_sprint_slug:
-                sprint_id = ensure_sprint(sprint_name) if sprint_name else active_sprint_id
-                if sprint_id:
-                    sp_res = composio_direct.tools.execute(
-                        slug=move_sprint_slug,
-                        arguments={"sprintId": sprint_id, "issues": [issue_key]},
+            sprint_id = ensure_sprint(sprint_name) if sprint_name else active_sprint_id
+            sprint_assigned = False
+            if sprint_id:
+                if move_sprint_slug:
+                    # JIRA_MOVE_ISSUE_TO_SPRINT requires sprintId + issues array
+                    for mv_args in [
+                        {"sprintId": sprint_id, "issues": [issue_key]},
+                        {"sprint_id": sprint_id, "issues": [issue_key]},
+                    ]:
+                        sp_res = composio_direct.tools.execute(
+                            slug=move_sprint_slug,
+                            arguments=mv_args,
+                            user_id=COMPOSIO_USER_ID,
+                            dangerously_skip_version_check=True,
+                        )
+                        if sp_res.get("successful"):
+                            print(f"[AGENT 3]   Sprint → '{sprint_name or 'active'}' ✓")
+                            sprint_assigned = True
+                            # If sprint is "future", start it so tickets appear on the board
+                            sprint_state = sprint_state_map.get(sprint_name, "")
+                            if sprint_state == "future" and update_sprint_slug:
+                                from datetime import datetime, timedelta
+                                now = datetime.utcnow()
+                                ur = composio_direct.tools.execute(
+                                    slug=update_sprint_slug,
+                                    arguments={
+                                        "sprintId": sprint_id,
+                                        "state": "active",
+                                        "startDate": now.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                                        "endDate": (now + timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                                    },
+                                    user_id=COMPOSIO_USER_ID,
+                                    dangerously_skip_version_check=True,
+                                )
+                                if ur.get("successful"):
+                                    print(f"[AGENT 3]   Sprint '{sprint_name}' activated — now visible on board ✓")
+                                    sprint_state_map[sprint_name] = "active"
+                                else:
+                                    print(f"[AGENT 3]   Sprint activate failed: {str(ur.get('error',''))[:150]}")
+                                    print(f"[AGENT 3]   ⚠ Sprint is in 'future' state — go to Jira and start it manually to see tickets on the board")
+                            elif sprint_state == "future":
+                                print(f"[AGENT 3]   ⚠ Sprint '{sprint_name}' is in 'future' state — start it in Jira to see tickets on the board")
+                            break
+                        print(f"[AGENT 3]   Sprint move attempt ({list(mv_args.keys())}): {str(sp_res.get('error',''))[:100]}")
+                    if not sprint_assigned:
+                        print(f"[AGENT 3]   Sprint move failed — trying edit fallback")
+
+                if not sprint_assigned and edit_issue_slug:
+                    # Fallback: set sprint via edit/update issue using Jira's sprint custom field
+                    sp_res2 = composio_direct.tools.execute(
+                        slug=edit_issue_slug,
+                        arguments={
+                            "issue_id_or_key": issue_key,
+                            "fields": {"customfield_10020": {"id": sprint_id}},
+                        },
                         user_id=COMPOSIO_USER_ID,
                         dangerously_skip_version_check=True,
                     )
-                    if sp_res.get("successful"):
-                        print(f"[AGENT 3]   Sprint → '{sprint_name or 'active'}' ✓")
+                    if sp_res2.get("successful"):
+                        print(f"[AGENT 3]   Sprint (via edit) → '{sprint_name or 'active'}' ✓")
+                        sprint_assigned = True
                     else:
-                        print(f"[AGENT 3]   Sprint assign failed: {str(sp_res.get('error',''))[:120]}")
-                else:
-                    print(f"[AGENT 3]   No sprint ID found for '{sprint_name}' — ticket stays in backlog")
+                        print(f"[AGENT 3]   Sprint edit failed: {str(sp_res2.get('error',''))[:200]}")
+
+                if not sprint_assigned:
+                    print(f"[AGENT 3]   Could not assign sprint — ticket stays in backlog")
             else:
-                print(f"[AGENT 3]   No sprint-move tool available — ticket stays in backlog")
+                print(f"[AGENT 3]   No sprint ID found for '{sprint_name}' — ticket stays in backlog")
 
             # ── Transition status ───────────────────────────────────────────
             target_status = STATUS_MAP.get(status_raw.lower(), "")
             if target_status and target_status.lower() != "to do":
                 trans_id = get_transition_id(issue_key, target_status)
                 if trans_id:
-                    composio_direct.tools.execute(
+                    tr_res = composio_direct.tools.execute(
                         slug=transition_slug,
-                        arguments={"issueKey": issue_key, "transitionId": trans_id},
+                        arguments={"issue_id_or_key": issue_key, "transition_id": trans_id},
                         user_id=COMPOSIO_USER_ID,
                         dangerously_skip_version_check=True,
                     )
-                    print(f"[AGENT 3]   Status → '{target_status}' ✓")
+                    if tr_res.get("successful"):
+                        print(f"[AGENT 3]   Status → '{target_status}' ✓")
+                    else:
+                        print(f"[AGENT 3]   Transition failed: {str(tr_res.get('error',''))[:150]}")
                 else:
                     print(f"[AGENT 3]   No transition found for '{target_status}' (get_trans_slug={get_trans_slug})")
 
