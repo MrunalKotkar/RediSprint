@@ -2,7 +2,7 @@
 
 Automates sprint planning by reading your Google Sheet, enriching each ticket using semantic search over past tickets and your codebase (via Redis Vector Search), and creating fully-described Jira issues — all orchestrated by three AI agents communicating through Redis Streams.
 
-> Built at the AI Tinkerers Hackathon (Agents with Superpowers Context Engineering Hackathon) at SF in October 2025. Won first place.
+> **Won 1st place** at the AI Tinkerers SF Hackathon — Agents with Superpowers Context Engineering · October 2025
 
 ---
 
@@ -16,24 +16,16 @@ Automates sprint planning by reading your Google Sheet, enriching each ticket us
 ## Architecture
 
 ```mermaid
-flowchart LR
-    GS[("Google Sheet\nSprint data")] --> A1
+flowchart TD
+    GS[("Google Sheet")]
 
-    subgraph Pipeline ["Agent Pipeline (Redis Streams)"]
-        direction LR
-        A1["Agent 1: Sprint Reader\nComposio Sheets"]
-        -->|"enrich-tickets stream"| A2["Agent 2: Context Enricher\nRedis Vector Search + Groq"]
-        -->|"create-jira stream"| A3["Agent 3: Jira Creator\nComposio Jira"]
-    end
+    GS --> A1["Agent 1: Sprint Reader\nComposio Sheets"]
+    A1 -->|"enrich-tickets stream"| A2["Agent 2: Context Enricher\nGroq + Redis Vector Search"]
+    A2 -->|"create-jira stream"| A3["Agent 3: Jira Creator\nComposio Jira"]
+    A3 --> J[("Jira Board")]
 
-    subgraph Indices ["Redis Cloud"]
-        T[("tickets_idx\npast tickets")]
-        C[("code_idx\ncodebase")]
-    end
-
-    A2 -. semantic search .-> T
-    A2 -. semantic search .-> C
-    A3 --> J[("Jira Board\nwith sprint + assignee")]
+    T[("tickets_idx\npast tickets")] -. semantic search .-> A2
+    C[("code_idx\ncodebase")] -. semantic search .-> A2
 ```
 
 ---
