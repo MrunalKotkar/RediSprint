@@ -1,0 +1,9 @@
+Sprint,Type,Title,Client Impact,Effort,Owner,Status,Assignee
+Sprint 3,Story,User dashboard redesign with dark mode support,High,8,Alice Chen,To Do,Bob Smith
+Sprint 3,Bug,Fix login session timeout on mobile browsers,Critical,3,Bob Smith,To Do,Alice Chen
+Sprint 3,Task,Add CSV export functionality to reports page,Medium,5,Carol Davis,To Do,Carol Davis
+Sprint 3,Story,Implement real-time notifications via WebSocket,High,8,Dave Wilson,To Do,Dave Wilson
+Sprint 3,Task,Migrate legacy API endpoints to REST v2,Medium,13,Eve Martinez,To Do,Eve Martinez
+Sprint 3,Bug,Resolve race condition in payment processing flow,Critical,5,Frank Lee,To Do,Frank Lee
+Sprint 3,Story,Build admin analytics dashboard with charts,Medium,8,Grace Kim,To Do,Grace Kim
+Sprint 3,Task,Add multi-language support (i18n) for EU markets,Low,13,Henry Brown,To Do,Henry Brown

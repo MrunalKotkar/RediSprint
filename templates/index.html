@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RediSprint – AI Sprint Planning</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 32px 16px;
+      color: #1a1a2e;
+    }
+
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Header */
+    .header {
+      text-align: center;
+      color: white;
+      padding: 8px 0 4px;
+    }
+    .header h1 { font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px; }
+    .header p  { font-size: 1rem; opacity: 0.85; margin-top: 6px; }
+
+    /* Cards */
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 24px 28px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+    }
+    .card h2 {
+      font-size: 1rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #667eea;
+      margin-bottom: 16px;
+    }
+
+    /* Upload zone */
+    .upload-zone {
+      border: 2.5px dashed #cbd5e0;
+      border-radius: 12px;
+      padding: 32px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      background: #fafbff;
+      position: relative;
+    }
+    .upload-zone:hover,
+    .upload-zone.drag-over {
+      border-color: #667eea;
+      background: #f0f2ff;
+    }
+    .upload-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+    .upload-icon { font-size: 2.4rem; margin-bottom: 10px; }
+    .upload-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #2d3748;
+      margin-bottom: 4px;
+    }
+    .upload-sub {
+      font-size: 0.82rem;
+      color: #718096;
+    }
+    .upload-sub span { color: #667eea; font-weight: 600; }
+
+    /* File ready state */
+    .file-ready {
+      display: none;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 18px;
+      background: #f0fff4;
+      border: 2px solid #9ae6b4;
+      border-radius: 12px;
+      margin-top: 12px;
+    }
+    .file-ready.visible { display: flex; }
+    .file-ready-icon { font-size: 1.6rem; flex-shrink: 0; }
+    .file-ready-name {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: #276749;
+      word-break: break-all;
+    }
+    .file-ready-size { font-size: 0.78rem; color: #48bb78; margin-top: 2px; }
+    .btn-remove-file {
+      margin-left: auto;
+      padding: 6px 12px;
+      border: 1.5px solid #9ae6b4;
+      background: white;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      color: #276749;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.2s;
+    }
+    .btn-remove-file:hover { background: #c6f6d5; }
+
+    /* Upload error */
+    .upload-error {
+      display: none;
+      margin-top: 10px;
+      padding: 10px 14px;
+      background: #fff5f5;
+      border: 1.5px solid #fed7d7;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      color: #c53030;
+    }
+    .upload-error.visible { display: block; }
+
+    .upload-hint {
+      margin-top: 12px;
+      font-size: 0.8rem;
+      color: #718096;
+      line-height: 1.5;
+    }
+    .upload-hint a { color: #667eea; text-decoration: none; cursor: pointer; }
+    .upload-hint a:hover { text-decoration: underline; }
+
+    /* Agent pipeline */
+    .pipeline {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      flex-wrap: wrap;
+    }
+    .agent-card {
+      flex: 1;
+      min-width: 160px;
+      background: #f7f8ff;
+      border: 2px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+      transition: all 0.3s;
+    }
+    .agent-card.active  { border-color: #667eea; background: #eef0ff; }
+    .agent-card.done    { border-color: #48bb78; background: #f0fff4; }
+    .agent-card .icon   { font-size: 1.6rem; margin-bottom: 6px; }
+    .agent-card .name   { font-size: 0.8rem; font-weight: 700; color: #4a5568; }
+    .agent-card .desc   { font-size: 0.72rem; color: #718096; margin-top: 3px; line-height: 1.3; }
+
+    .arrow {
+      font-size: 1.2rem;
+      color: #cbd5e0;
+      padding: 0 6px;
+      flex-shrink: 0;
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .btn-run {
+      padding: 13px 32px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 14px rgba(102,126,234,0.4);
+    }
+    .btn-run:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(102,126,234,0.5);
+    }
+    .btn-run:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-clear-log {
+      padding: 13px 20px;
+      background: white;
+      color: #718096;
+      border: 2px solid #e2e8f0;
+      border-radius: 12px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-clear-log:hover { border-color: #cbd5e0; background: #f7fafc; }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      background: #f0fff4;
+      color: #276749;
+      border: 1.5px solid #9ae6b4;
+      transition: all 0.3s;
+    }
+    .status-pill.running {
+      background: #ebf8ff;
+      color: #2c5282;
+      border-color: #90cdf4;
+    }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #48bb78;
+      flex-shrink: 0;
+    }
+    .status-dot.pulse {
+      background: #4299e1;
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(1.4); }
+    }
+
+    /* Terminal */
+    .terminal {
+      background: #0d1117;
+      border-radius: 12px;
+      padding: 20px;
+      height: 400px;
+      overflow-y: auto;
+      font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+      font-size: 0.82rem;
+      line-height: 1.6;
+      scrollbar-width: thin;
+      scrollbar-color: #30363d #0d1117;
+    }
+    .terminal::-webkit-scrollbar       { width: 6px; }
+    .terminal::-webkit-scrollbar-track { background: #0d1117; }
+    .terminal::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+    .terminal .placeholder {
+      color: #484f58;
+      font-style: italic;
+    }
+
+    .log-line { margin: 1px 0; }
+    .log-line.success { color: #3fb950; }
+    .log-line.error   { color: #f85149; }
+    .log-line.warn    { color: #d29922; }
+    .log-line.info    { color: #58a6ff; }
+    .log-line.default { color: #c9d1d9; }
+    .log-line.sep     { color: #30363d; }
+
+    /* Format modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: white;
+      border-radius: 16px;
+      padding: 28px;
+      max-width: 700px;
+      width: 90%;
+      max-height: 85vh;
+      overflow-y: auto;
+    }
+    .modal h3   { font-size: 1.1rem; font-weight: 700; color: #2d3748; margin-bottom: 14px; }
+    .modal p    { font-size: 0.88rem; color: #4a5568; margin-bottom: 12px; line-height: 1.6; }
+    .modal table { width: 100%; border-collapse: collapse; font-size: 0.83rem; margin-bottom: 16px; }
+    .modal th, .modal td { padding: 8px 12px; border: 1px solid #e2e8f0; text-align: left; }
+    .modal th   { background: #f7f8ff; font-weight: 700; color: #4a5568; }
+    .modal .example-row td { background: #fffbeb; font-family: monospace; font-size: 0.8rem; }
+    .modal-footer { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+    .modal .btn-close {
+      padding: 10px 24px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .modal .btn-download {
+      padding: 10px 24px;
+      background: white;
+      color: #667eea;
+      border: 2px solid #667eea;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      text-decoration: none;
+      display: inline-block;
+      font-size: 0.88rem;
+    }
+    .modal .btn-download:hover { background: #f0f2ff; }
+
+    @media (max-width: 600px) {
+      .pipeline { flex-direction: column; }
+      .arrow    { transform: rotate(90deg); }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>RediSprint</h1>
+    <p>AI-Powered Sprint Planning · Upload CSV / Excel → Jira · via Redis Streams</p>
+  </div>
+
+  <!-- File Upload -->
+  <div class="card">
+    <h2>Sprint Data File</h2>
+
+    <div class="upload-zone" id="upload-zone">
+      <input type="file" id="file-input" accept=".csv,.xlsx,.xls" />
+      <div class="upload-icon">📂</div>
+      <div class="upload-title">Drop your sprint file here</div>
+      <div class="upload-sub">or <span>click to browse</span> &nbsp;·&nbsp; CSV, XLSX, XLS</div>
+    </div>
+
+    <div class="file-ready" id="file-ready">
+      <div class="file-ready-icon">✅</div>
+      <div>
+        <div class="file-ready-name" id="file-ready-name"></div>
+        <div class="file-ready-size" id="file-ready-size"></div>
+      </div>
+      <button class="btn-remove-file" onclick="removeFile()">Remove</button>
+    </div>
+
+    <div class="upload-error" id="upload-error"></div>
+
+    <p class="upload-hint">
+      File must have a header row with columns: Sprint, Type, Title, Client Impact, Effort, Owner, Status, Assignee.
+      <a onclick="openFormatModal()">View required format →</a>
+    </p>
+  </div>
+
+  <!-- Agent Pipeline -->
+  <div class="card">
+    <h2>Agent Pipeline</h2>
+    <div class="pipeline">
+      <div class="agent-card" id="agent-1">
+        <div class="icon">📂</div>
+        <div class="name">Agent 1 · Reader</div>
+        <div class="desc">Reads sprint rows from uploaded CSV / Excel file</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="agent-card" id="agent-2">
+        <div class="icon">🔎</div>
+        <div class="name">Agent 2 · Enricher</div>
+        <div class="desc">Semantic search over past tickets &amp; codebase via Redis</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="agent-card" id="agent-3">
+        <div class="icon">🎫</div>
+        <div class="name">Agent 3 · Creator</div>
+        <div class="desc">Creates enriched Jira tickets via Composio</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="card" style="padding: 20px 28px;">
+    <div class="controls">
+      <button class="btn-run" id="btn-run" onclick="startAutomation()" disabled>
+        ▶ Run Sprint Automation
+      </button>
+      <button class="btn-clear-log" onclick="clearLog()">Clear Log</button>
+      <div class="status-pill" id="status-pill">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-text">Upload a file to begin</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Terminal Output -->
+  <div class="card" style="padding: 0; overflow: hidden;">
+    <div class="terminal" id="terminal">
+      <span class="placeholder">▶ Upload a sprint file and click Run Sprint Automation to start...</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- Format Modal -->
+<div class="modal-overlay" id="format-modal" onclick="closeFormatModalBg(event)">
+  <div class="modal">
+    <h3>Required File Format</h3>
+    <p>
+      Your CSV or Excel file must have <strong>Row 1 as a header row</strong> with these column names,
+      followed by your sprint data rows. Column order must match exactly.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Column</th>
+          <th>Header Name</th>
+          <th>Example Values</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>A</td><td>Sprint</td><td>Sprint 3, Q1-W2</td><td>Groups tickets; latest sprint is auto-detected</td></tr>
+        <tr><td>B</td><td>Type</td><td>Task, Bug, Story, Epic</td><td>Maps to Jira issue type</td></tr>
+        <tr><td>C</td><td>Title</td><td>Add OAuth2 login flow</td><td>Becomes the Jira summary</td></tr>
+        <tr><td>D</td><td>Client Impact</td><td>High, Medium, Low, Critical</td><td>Maps to Jira priority</td></tr>
+        <tr><td>E</td><td>Effort</td><td>3, 5, 8, 13</td><td>Story points</td></tr>
+        <tr><td>F</td><td>Owner</td><td>Jane Smith</td><td>Ticket reporter / owner</td></tr>
+        <tr><td>G</td><td>Status</td><td>To Do, In Progress, Done</td><td>Current status</td></tr>
+        <tr><td>H</td><td>Assignee</td><td>Bob Johnson</td><td>Jira assignee</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Example rows:</strong></p>
+    <table>
+      <thead>
+        <tr><th>Sprint</th><th>Type</th><th>Title</th><th>Client Impact</th><th>Effort</th><th>Owner</th><th>Status</th><th>Assignee</th></tr>
+      </thead>
+      <tbody>
+        <tr class="example-row">
+          <td>Sprint 3</td><td>Story</td><td>User dashboard redesign</td><td>High</td><td>8</td><td>Alice</td><td>To Do</td><td>Bob</td>
+        </tr>
+        <tr class="example-row">
+          <td>Sprint 3</td><td>Bug</td><td>Fix login timeout on mobile</td><td>Critical</td><td>3</td><td>Bob</td><td>To Do</td><td>Alice</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      The system automatically picks the <strong>latest sprint</strong> (last unique value in column A)
+      and only creates Jira tickets for that sprint.
+    </p>
+    <div class="modal-footer">
+      <a class="btn-download" href="/template" download>Download CSV Template</a>
+      <button class="btn-close" onclick="document.getElementById('format-modal').classList.remove('open')">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let eventSource = null;
+  let isRunning = false;
+  let uploadedFilePath = null;
+
+  const AGENT_KEYWORDS = {
+    'agent-1': ['AGENT 1', 'Sprint Reader'],
+    'agent-2': ['AGENT 2', 'Context Enricher'],
+    'agent-3': ['AGENT 3', 'Jira Creator'],
+  };
+
+  // ---- File Upload ----
+  const fileInput = document.getElementById('file-input');
+  const uploadZone = document.getElementById('upload-zone');
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length > 0) handleFile(fileInput.files[0]);
+  });
+
+  uploadZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    uploadZone.classList.add('drag-over');
+  });
+  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+  uploadZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    uploadZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+
+  async function handleFile(file) {
+    hideUploadError();
+    const allowed = ['csv', 'xlsx', 'xls'];
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!allowed.includes(ext)) {
+      showUploadError('Only .csv, .xlsx, and .xls files are supported.');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok || data.status !== 'success') {
+        showUploadError(data.message || 'Upload failed.');
+        return;
+      }
+      uploadedFilePath = data.path;
+      showFileReady(data.filename, file.size);
+    } catch (e) {
+      showUploadError('Upload failed: ' + e.message);
+    }
+  }
+
+  function showFileReady(name, size) {
+    document.getElementById('file-ready-name').textContent = name;
+    document.getElementById('file-ready-size').textContent = formatBytes(size);
+    document.getElementById('file-ready').classList.add('visible');
+    uploadZone.style.display = 'none';
+    document.getElementById('btn-run').disabled = false;
+    document.getElementById('status-text').textContent = 'Ready';
+  }
+
+  function removeFile() {
+    uploadedFilePath = null;
+    fileInput.value = '';
+    document.getElementById('file-ready').classList.remove('visible');
+    uploadZone.style.display = '';
+    document.getElementById('btn-run').disabled = true;
+    document.getElementById('status-text').textContent = 'Upload a file to begin';
+    hideUploadError();
+  }
+
+  function showUploadError(msg) {
+    const el = document.getElementById('upload-error');
+    el.textContent = msg;
+    el.classList.add('visible');
+  }
+
+  function hideUploadError() {
+    document.getElementById('upload-error').classList.remove('visible');
+  }
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  // ---- Automation ----
+  function setRunning(running) {
+    isRunning = running;
+    const btn = document.getElementById('btn-run');
+    const pill = document.getElementById('status-pill');
+    const dot  = document.getElementById('status-dot');
+    const txt  = document.getElementById('status-text');
+
+    btn.disabled = running;
+    btn.textContent = running ? '⏳ Running...' : '▶ Run Sprint Automation';
+
+    if (running) {
+      pill.classList.add('running');
+      dot.classList.add('pulse');
+      txt.textContent = 'Running';
+    } else {
+      pill.classList.remove('running');
+      dot.classList.remove('pulse');
+      txt.textContent = uploadedFilePath ? 'Ready' : 'Upload a file to begin';
+    }
+  }
+
+  function highlightAgent(line) {
+    for (const [id, keywords] of Object.entries(AGENT_KEYWORDS)) {
+      if (keywords.some(k => line.includes(k))) {
+        document.querySelectorAll('.agent-card').forEach(c => c.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        if (line.includes('Finished') || line.includes('completed')) {
+          document.getElementById(id).classList.add('done');
+        }
+        break;
+      }
+    }
+  }
+
+  function classifyLine(line) {
+    if (!line.trim()) return 'default';
+    if (line.includes('[OK]') || line.includes('Created:') || line.includes('Finished') || line.includes('successfully') || line.includes('All agents')) return 'success';
+    if (line.includes('Failed') || line.includes('Error') || line.includes('error') || line.includes('failed')) return 'error';
+    if (line.includes('Warning') || line.includes('warning')) return 'warn';
+    if (line.includes('Starting') || line.includes('Enriching') || line.includes('Creating') || line.includes('Reading') || line.includes('Found')) return 'info';
+    if (line.startsWith('===') || line.startsWith('---')) return 'sep';
+    return 'default';
+  }
+
+  function appendLine(text) {
+    const terminal = document.getElementById('terminal');
+    const placeholder = terminal.querySelector('.placeholder');
+    if (placeholder) placeholder.remove();
+
+    const div = document.createElement('div');
+    div.className = `log-line ${classifyLine(text)}`;
+    div.textContent = text;
+    terminal.appendChild(div);
+    terminal.scrollTop = terminal.scrollHeight;
+
+    highlightAgent(text);
+  }
+
+  async function startAutomation() {
+    if (isRunning || !uploadedFilePath) return;
+
+    setRunning(true);
+    document.querySelectorAll('.agent-card').forEach(c => c.classList.remove('active', 'done'));
+
+    if (eventSource) { eventSource.close(); eventSource = null; }
+
+    const res = await fetch('/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ upload_path: uploadedFilePath })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      appendLine('Error: ' + data.message);
+      setRunning(false);
+      return;
+    }
+
+    appendLine(`Using file: ${data.filename}`);
+
+    eventSource = new EventSource('/stream');
+    eventSource.onmessage = (e) => {
+      if (e.data === '[DONE]') {
+        eventSource.close();
+        eventSource = null;
+        setRunning(false);
+        document.querySelectorAll('.agent-card').forEach(c => c.classList.add('done'));
+        return;
+      }
+      appendLine(e.data);
+    };
+    eventSource.onerror = () => {
+      eventSource.close();
+      eventSource = null;
+      setRunning(false);
+    };
+  }
+
+  function clearLog() {
+    const terminal = document.getElementById('terminal');
+    terminal.innerHTML = '<span class="placeholder">▶ Upload a sprint file and click Run Sprint Automation to start...</span>';
+    document.querySelectorAll('.agent-card').forEach(c => c.classList.remove('active', 'done'));
+  }
+
+  function openFormatModal() {
+    document.getElementById('format-modal').classList.add('open');
+  }
+
+  function closeFormatModalBg(e) {
+    if (e.target === document.getElementById('format-modal')) {
+      document.getElementById('format-modal').classList.remove('open');
+    }
+  }
+</script>
+</body>
+</html>

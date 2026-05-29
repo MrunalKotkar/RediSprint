@@ -1,0 +1,12 @@
+openai>=1.0.0
+openai-agents>=0.0.3
+composio-core>=0.6.0
+composio-openai-agents>=0.6.0
+redisvl>=0.4.0
+redis>=5.0.0
+flask>=3.0.0
+python-dotenv>=1.0.0
+numpy>=1.26.0
+tiktoken>=0.7.0
+sentence-transformers>=3.0.0
+openpyxl>=3.1.0
