@@ -1,15 +1,14 @@
 # RediSprint: AI-Powered Sprint Planning
 
-Automates sprint planning by reading your Google Sheet, enriching each ticket using semantic search over past tickets and your codebase (via Redis Vector Search), and creating fully-described Jira issues — all orchestrated by three AI agents communicating through Redis Streams.
+Automates sprint planning by reading your Google Sheet, enriching each ticket using semantic search over past tickets and your codebase (via Redis Vector Search), and creating fully-described Jira issues, all orchestrated by three AI agents communicating through Redis Streams.
 
-> **Won 1st place** at the AI Tinkerers SF Hackathon — Agents with Superpowers Context Engineering · October 2025
+> **Won 1st place** at the AI Tinkerers SF Hackathon (Agents with Superpowers Context Engineering) in October 2025
 
 ---
 
 ## Demo
 
-<!-- Add your demo video link here once it is ready -->
-> Demo video coming soon.
+[![RediSprint Demo](https://img.youtube.com/vi/uPKb2A4ZwCU/0.jpg)](https://youtu.be/uPKb2A4ZwCU)
 
 ---
 
